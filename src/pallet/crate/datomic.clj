@@ -10,7 +10,7 @@
 ;;                                  /opt/local/datomic/version
 ;; * Install the upstart service (IT DOES NOT RUN THE SERVICE)
 (ns pallet.crate.datomic
-  (:require 
+  (:require
    pallet.node
    [pallet.actions :as actions]
    [pallet.action :as action]
@@ -32,9 +32,10 @@
    :type "free"
    :user "datomic"
    :group "datomic"
+   :offline false
    :service-name "datomic"
    :supervisor :upstart
-   :verify false ;; Don't verify the conf script 
+   :verify false ;; Don't verify the conf script
    :config-path "/etc/datomic"
    :config {:protocol "free", :host "localhost" :port "4334"
             :data-dir "/var/lib/datomic/data"
@@ -66,8 +67,8 @@
     (actions/directory (:log-dir config) :path true
                        :owner user :group group)
     (actions/file (str (:log-dir config) "/datomic.log")
-                 :action :touch :owner user
-                 :group group :mode 644)))
+                  :action :touch :owner user
+                  :group group :mode 644)))
 
 (defn- write-config-file
   "Writes out the config file with user and group permissions
@@ -76,25 +77,25 @@
   (let [
         data-to-write (file-format/name-values config)]
     (actions/remote-file (str config-path "/" config-file-name)
-                              :content data-to-write)))
+                         :content data-to-write)))
 
 (defmethod svc/supervisor-config-map [:datomic :upstart]
-  [_ {:keys [config-path 
+  [_ {:keys [config-path
              service-name user config] :as settings} options]
-  {:service-name service-name 
-   :start-on (str "runlevel [2345]\n" 
+  {:service-name service-name
+   :start-on (str "runlevel [2345]\n"
                   "start on (started network-interface\n"
-                                  "or started network-manager\n"
-                                  "or started networking)") 
-   :respawn true 
+                  "or started network-manager\n"
+                  "or started networking)")
+   :respawn true
    :script (str "chdir " (create-current-path datomic-root) "\n"
-                "exec sudo -u " user " bin/transactor " 
-                config-path "/" config-file-name " >> " (:log-dir config) 
+                "exec sudo -u " user " bin/transactor "
+                config-path "/" config-file-name " >> " (:log-dir config)
                 "/datomic.log 2>&1")
    :stop-on (str "(stopping network-interface\n"
-               "or stopping network-manager\n"
-               "or stopping networking)\n"
-             "stop on runlevel [016]")})
+                 "or stopping network-manager\n"
+                 "or stopping networking)\n"
+                 "stop on runlevel [016]")})
 
 (defn- add-to-config-entry
   "For the config entry this will associate the key to the value if
@@ -122,8 +123,8 @@
         private_ip (pallet.node/private-ip node)
         public_ip (pallet.node/primary-ip node)
         merger (-> (merge *default-settings* settings options)
-                    (add-to-config-entry :host private_ip)
-                    (add-to-config-entry :alt-host public_ip))]
+                   (add-to-config-entry :host private_ip)
+                   (add-to-config-entry :alt-host public_ip))]
     (upstart/settings merger)
     (svc/supervisor-config :datomic merger {:instance-id instance-id})
     (crate/assoc-settings :datomic merger {:instance-id instance-id})))
@@ -131,7 +132,6 @@
 (crate/defplan install
   "Install datomic"
   [& {:keys [instance-id]}]
-  (println "LSDFJLSDJFLSDJF")
   (let [
         settings (crate/get-settings :datomic {:instance-id instance-id :default ::no-settings})
         {:keys [version type user group config]} settings
@@ -142,9 +142,9 @@
     ;; call otherwise the actions/user call would fail because
     ;; /opt/local directory is not created yet
     (action/with-action-options {:always-before #{actions/user}}
-    (actions/directory "/opt/local" :path true :owner "root" :group "root"))
+      (actions/directory "/opt/local" :path true :owner "root" :group "root"))
     (actions/user user :home datomic-root
-                   :shell :bash :create-home true :system false)
+                  :shell :bash :create-home true :system false)
     (make-datomic-directories settings)
     (write-config-file settings)
     (actions/packages
@@ -152,19 +152,28 @@
      :aptitude ["unzip"]
      :pkgin ["unzip"])
 
-    (actions/remote-directory
-     datomic-root
-     :url url
-     :unpack :unzip
-     :owner user
-     :group group)
+    (if (= true (:offline settings))
+      (actions/remote-directory
+       datomic-root
+       :unpack :unzip
+       :owner user
+       :group group
+       :local-file (str "resources/" (datomic-file-name version type ".zip")))
+      (actions/remote-directory
+       datomic-root
+       :url url
+       :unpack :unzip
+       :owner user
+       :group group))
+
+
     (actions/symbolic-link (str datomic-root "/" (datomic-file-name version type))
                            (create-current-path datomic-root)
                            :action :create
                            :owner user
                            :group group)))
 
-(crate/defplan restarter 
+(crate/defplan restarter
   "Install datomic"
   [& {:keys [instance-id]}]
   (let [settings (crate/get-settings :datomic {:instance-id instance-id})]
@@ -172,28 +181,17 @@
     )
   )
 
-;(crate/defplan restart
-;  "Restart datomic"
-;  [& {:keys [instance-id]}]
-;  (println "IN RESTART")
- ; (let [settings (crate/get-settings :datomic {:instance-id instance-id})]
-;    (println "Settings = " settings)
-;    (svc/service settings {:action :restart}))
 
-;)
-
-(defn server-spec 
+(defn server-spec
   "Returns a service-spec for installing datomic"
   [sets & {:keys [instance-id] :as options}]
-  (println "HELRJELRJE")
   (api/server-spec :phases {:settings (api/plan-fn (settings sets))
                             :install (api/plan-fn
-                                        (install)
-                                       (upstart/install options))
+                                      (install)
+                                      (upstart/install options))
                             :configure (api/plan-fn (upstart/configure options))
                             :restart (api/plan-fn (restarter))
-                            
-                                      }
-                   
-                   ))
 
+                            }
+
+                   ))
